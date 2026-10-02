@@ -102,7 +102,7 @@ fun ChannelInfo.status() = if (logged) Status.BLOCKED else statusOf(channel.impo
 
 fun ChannelInfo.behaviorLabel() = when {
     logged -> "Blocked"
-    channel.importance == NotificationManager.IMPORTANCE_NONE -> "Blocked · not logged"
+    channel.importance == NotificationManager.IMPORTANCE_NONE -> "Off in Android settings"
     else -> importanceLabel(channel.importance)
 }
 

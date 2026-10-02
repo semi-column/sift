@@ -14,7 +14,9 @@ No root, no account, no internet permission: everything stays on your device.
 - **Notification history**: every notification is kept for 7 days in Logs, with blocked ones clearly marked. Filter by app, category, or shown/blocked.
 - **Blocking with a record**: blocked notifications are hidden as they arrive and saved in Logs, so you can check what you missed and allow a category again.
 - **New channels handled automatically**: choose what happens when an app adds a channel to a category.
-- **Keyword rules**: remove individual notifications whose text matches words you choose, for apps that mix promotions into normal channels.
+- **Keyword rules**: act on individual notifications whose text matches words you choose, for apps that mix promotions into normal channels. A rule can **remove** them, **snooze** them for an hour, or **keep** them — letting an OTP or a delivery update through a category you otherwise block. Rules can be narrowed to one app, one category, or both.
+- **Two ways to block**: *Hide & log* removes blocked notifications as they arrive but keeps a record of them, or *Block fully* switches the channel off in Android so nothing arrives at all.
+- **Back up your settings**: export channel behaviors, categories, rules, blocks, log exclusions and appearance to a file. Restore them for matching apps and channels on another device. Notification history and device-specific undo records are never included. Set up notification access and pairing before restoring; Android may refuse changes to locked channels.
 - **Exclude apps from Logs**: keep private apps (e.g. messengers) out of the history.
 - **Undo**: every change can be undone from the change history.
 
@@ -28,11 +30,17 @@ Android doesn't let regular apps change other apps' notification settings. Sift 
 Things to know:
 
 - **Categories are a best guess.** Android has no category field for channels, so Sift infers one from channel names, descriptions and the categories apps attach to notifications. You can change any channel's category by hand.
-- **Blocking hides notifications as they arrive.** A blocked category is set to *Minimized* (no sound, pop-up or status-bar icon), and Sift removes each notification the moment it arrives and logs it. It can appear silently in the shade for a split second.
-- **Categories already off in Android Settings are taken over** so they're logged too. Notifications from before Sift was set up can't be recovered.
+- **Hide & log removes notifications as they arrive.** A blocked category is set to *Minimized* (no sound, pop-up or status-bar icon), and Sift removes each notification the moment it arrives and logs it. It can appear silently in the shade for a split second.
+- **In Hide & log mode, categories already off in Android Settings are taken over** so they're logged too. Block fully leaves those channels off. Notifications from before Sift was set up can't be recovered.
 - **Apps with their main notification switch off can't be logged or managed.** Android drops everything from them before any app can see it. Turn the switch on and block their categories in Sift instead.
 - **Keyword rules act after a notification arrives**, so a matching one may appear for a moment.
-- **If you uninstall Sift**, categories it blocked stay *Minimized* and will start appearing silently. Allow them in Sift first, or re-block them in Android Settings.
+- **"Keep" rules can't un-silence anything.** By the time Sift sees a notification Android has already delivered it at its channel's importance, so a kept one stays in the shade silently, without sound or a pop-up. It is simply not removed.
+- **"Block fully" turns off logging and rules for blocked channels.** Android drops notifications from a channel set to *None* before any app can see them, so there is nothing left to record or match. Use *Hide & log* if you want a record of what was blocked, or "keep" rules to work.
+- **If you uninstall Sift**, Hide & log channels stay *Minimized* and start appearing silently; Block fully channels stay off. Allow them in Sift first, or adjust them in Android Settings.
+
+## Support
+
+If Sift is useful to you, you can [sponsor its development](https://github.com/sponsors/semi-column). Bug reports and wrong-category reports are just as welcome: [open an issue](https://github.com/semi-column/sift/issues).
 
 ## Requirements
 
@@ -59,6 +67,7 @@ All releases are signed with the same key. Android refuses to update Sift with a
 - No internet permission. Sift can't send anything anywhere.
 - Notification history is stored only in the app's private storage, kept for 7 days, and excluded from Android backups and device transfers.
 - Clearing history, excluding an app, or uninstalling deletes the stored notifications.
+- Settings backups include your channel settings, categories, rules, blocks, log exclusions and appearance, but no notification history. Backups are unencrypted JSON, so store them somewhere private; rule keywords can contain sensitive phrases.
 
 ## Permissions
 

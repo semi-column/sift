@@ -154,8 +154,8 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
                     nav.push("category/${it.name}")
                 }
                 Tab.APPS -> AppsScreen(apps, history, progress, onTab = { tab = it }) { nav.push("app/$it") }
-                Tab.LOGS -> LogsScreen(history, apps, access, onTab = { tab = it }, nav, vm)
-                Tab.RULES -> RulesScreen(store.rules, apps, history, access, onTab = { tab = it }, nav, vm)
+                Tab.LOGS -> LogsScreen(history, apps, store.blockMode, access, onTab = { tab = it }, nav, vm)
+                Tab.RULES -> RulesScreen(store.rules, apps, history, store.blockMode, access, onTab = { tab = it }, nav, vm)
                 Tab.SETTINGS -> SettingsScreen(access, store, apps, onTab = { tab = it }, nav, vm)
             }
             route.startsWith("category/") -> {

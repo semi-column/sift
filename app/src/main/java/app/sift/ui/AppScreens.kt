@@ -61,7 +61,7 @@ fun AppsScreen(
     var showSystem by rememberSaveable { mutableStateOf(false) }
     var showEmpty by rememberSaveable { mutableStateOf(false) }
     val counts = remember(history) { history.groupingBy { it.pkg }.eachCount() }
-    val blockedCounts = remember(history) { history.filter { it.outcome != Outcome.SHOWN }.groupingBy { it.pkg }.eachCount() }
+    val blockedCounts = remember(history) { history.filter { it.outcome.keptOut }.groupingBy { it.pkg }.eachCount() }
     val shown = remember(apps, query, sort, onlyBlocked, showSystem, showEmpty, counts) {
         val matching = if (query.isNotBlank()) {
             apps.filter { it.label.contains(query, true) || it.pkg.contains(query, true) }

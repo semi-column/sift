@@ -212,7 +212,7 @@ fun HomeScreen(
 @Composable
 private fun TodayCard(history: List<HistoryEntry>, onClick: () -> Unit) {
     val today = remember(history) { history.filter { DateUtils.isToday(it.time) } }
-    val blocked = today.count { it.outcome != Outcome.SHOWN }
+    val blocked = today.count { it.outcome.keptOut }
     val noisiest = remember(today) { today.groupingBy { it.app }.eachCount().maxByOrNull { it.value } }
     Surface(
         onClick = onClick,

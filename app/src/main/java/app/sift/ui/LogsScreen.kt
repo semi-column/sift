@@ -60,26 +60,32 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.sift.backend.AccessState
 import app.sift.data.AppInfo
+import app.sift.data.BlockMode
 import app.sift.data.Category
 import app.sift.data.ChannelAction
 import app.sift.data.ChannelInfo
 import app.sift.data.HistoryEntry
 import app.sift.data.Outcome
 import app.sift.data.Rule
+import app.sift.data.RuleAction
 
 private enum class ShowFilter(val label: String) { ALL("All"), SHOWN("Shown"), BLOCKED("Blocked") }
 
-private val HistoryEntry.blocked get() = outcome != Outcome.SHOWN
+private val HistoryEntry.blocked get() = outcome.keptOut
 
 private fun HistoryEntry.blockLabel() = when (outcome) {
     Outcome.RULE -> "Removed by rule \u201c$reason\u201d"
     else -> "Blocked" + channelName.ifBlank { null }?.let { " \u00b7 $it" }.orEmpty()
 }
 
+/** Shown, but only because a "keep" rule overrode its category block. */
+private fun HistoryEntry.allowLabel() = "Kept by rule \u201c$reason\u201d"
+
 @Composable
 fun LogsScreen(
     entries: List<HistoryEntry>,
     apps: List<AppInfo>,
+    blockMode: BlockMode,
     access: AccessState,
     onTab: (Tab) -> Unit,
     nav: Nav,
@@ -133,7 +139,17 @@ fun LogsScreen(
             filteredToApp = pkg == e.pkg,
             onDismiss = { open = null },
             onAction = { vm.setChannelFromLog(e, it); open = null },
-            onRule = { words -> ruleDraft = Rule(System.currentTimeMillis(), "", words, e.pkg); open = null },
+            onRule = { words ->
+                ruleDraft = Rule(
+                    id = System.currentTimeMillis(),
+                    name = "",
+                    keywords = words,
+                    pkg = e.pkg,
+                    category = e.category,
+                    action = if (e.outcome == Outcome.BLOCKED) RuleAction.ALLOW else RuleAction.DISMISS,
+                )
+                open = null
+            },
             onShowApp = { pkg = e.pkg; show = ShowFilter.ALL; category = null; open = null },
             onOpenApp = { open = null; nav.push("app/${e.pkg}") },
             onDelete = { vm.deleteEntry(e); open = null },
@@ -145,6 +161,7 @@ fun LogsScreen(
             isNew = true,
             apps = apps,
             history = entries,
+            blockMode = blockMode,
             onDismiss = { ruleDraft = null },
             onSave = { vm.saveRule(it); vm.say("Rule \u201c${it.name}\u201d created"); ruleDraft = null },
             onDelete = null,
@@ -237,10 +254,19 @@ private fun EntryRow(e: HistoryEntry, onClick: () -> Unit) {
                 if (e.text.isNotBlank()) {
                     Text(e.text, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                val allowed = e.outcome == Outcome.ALLOWED
                 Text(
-                    if (blocked) "${e.app} \u00b7 ${e.blockLabel()}" else listOf(e.app, e.channelName).filter { it.isNotBlank() }.joinToString(" \u00b7 "),
+                    when {
+                        blocked -> "${e.app} \u00b7 ${e.blockLabel()}"
+                        allowed -> "${e.app} \u00b7 ${e.allowLabel()}"
+                        else -> listOf(e.app, e.channelName).filter { it.isNotBlank() }.joinToString(" \u00b7 ")
+                    },
                     style = MaterialTheme.typography.labelMedium,
-                    color = if (blocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = when {
+                        blocked -> MaterialTheme.colorScheme.error
+                        allowed -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -317,6 +343,7 @@ private fun EntrySheet(
                 }
                 when (e.outcome) {
                     Outcome.SHOWN -> Pill("Shown")
+                    Outcome.ALLOWED -> Pill("Kept", color = MaterialTheme.colorScheme.primary)
                     Outcome.BLOCKED -> Pill("Blocked", color = MaterialTheme.colorScheme.error)
                     Outcome.RULE -> Pill("Rule", color = MaterialTheme.colorScheme.error)
                 }
@@ -346,6 +373,14 @@ private fun EntrySheet(
                     }
                     if (e.text.isNotBlank()) {
                         Text(e.text, Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState()), style = MaterialTheme.typography.bodyMedium)
+                    }
+                    if (e.outcome == Outcome.ALLOWED) {
+                        Text(
+                            e.allowLabel(),
+                            Modifier.padding(top = 4.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
                     }
                     if (e.outcome == Outcome.RULE) {
                         Text(
@@ -380,12 +415,16 @@ private fun EntrySheet(
                 }
             }
 
-            SheetLabel("Only notifications like this one")
+            val keeping = e.outcome == Outcome.BLOCKED
+            SheetLabel(if (keeping) "Let some of these through" else "Only notifications like this one")
             Text(
-                if (candidates.isEmpty()) {
-                    "Create a rule to remove notifications that mention words you choose."
-                } else {
-                    "Tap the words that give it away, then create a rule. It catches them in any channel."
+                when {
+                    keeping && candidates.isEmpty() ->
+                        "Create a rule to keep notifications that mention words you choose, even though this category is blocked."
+                    keeping ->
+                        "Tap the words worth keeping, then create a rule. Matching notifications stay in the shade instead of being removed \u2014 silently, without a pop-up."
+                    candidates.isEmpty() -> "Create a rule to remove notifications that mention words you choose."
+                    else -> "Tap the words that give it away, then create a rule. It catches them in any channel."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -401,10 +440,10 @@ private fun EntrySheet(
                 Icon(Icons.Default.FilterAlt, null, Modifier.size(18.dp))
                 Spacer(Modifier.size(8.dp))
                 Text(
-                    when (picked.size) {
-                        0 -> "Create rule"
-                        1 -> "Create rule with 1 word"
-                        else -> "Create rule with ${picked.size} words"
+                    when {
+                        picked.isEmpty() -> if (keeping) "Create keep rule" else "Create rule"
+                        picked.size == 1 -> if (keeping) "Keep ones saying 1 word" else "Create rule with 1 word"
+                        else -> if (keeping) "Keep ones saying ${picked.size} words" else "Create rule with ${picked.size} words"
                     },
                 )
             }

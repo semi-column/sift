@@ -14,8 +14,10 @@ import app.sift.data.Classifier
 import app.sift.data.HistoryEntry
 import app.sift.data.Outcome
 import app.sift.data.Rule
+import app.sift.data.StoreData
 import app.sift.data.RuleAction
 import app.sift.data.keyOf
+import app.sift.data.matchingRule
 import kotlinx.coroutines.launch
 
 class NotifListener : NotificationListenerService() {
@@ -59,9 +61,15 @@ class NotifListener : NotificationListenerService() {
         }
         val d = app.store.data.value
         val clearable = !sbn.isOngoing && sbn.isClearable
+        val rule = if (clearable) matchRule(d.rules, sbn, categoryOf(sbn, channel, d)) else null
+        val kept = rule?.action == RuleAction.ALLOW
+
         val blockAndLog = channelId != null && keyOf(sbn.packageName, channelId) in d.logBlocked &&
             (bundled || channel?.importance == NotificationManager.IMPORTANCE_MIN)
-        if (blockAndLog && clearable) {
+        // A "keep" rule beats the category block, which is the whole point of it. Android has
+        // already delivered this at the channel's (minimised) importance, so all we can do is
+        // not remove it - it stays in the shade silently.
+        if (blockAndLog && clearable && !kept) {
             // Group summaries are removed too, but only real notifications are logged.
             cancelNotification(sbn.key)
             if (worthLogging(sbn)) record(sbn, channel, Outcome.BLOCKED)
@@ -69,16 +77,18 @@ class NotifListener : NotificationListenerService() {
         }
         if (!worthLogging(sbn)) return
 
-        val rule = if (clearable) matchRule(d.rules, sbn) else null
-        when {
-            rule != null -> {
-                when (rule.action) {
-                    RuleAction.DISMISS -> cancelNotification(sbn.key)
-                    RuleAction.SNOOZE -> snoozeNotification(sbn.key, 60 * 60 * 1000L)
-                }
+        when (rule?.action) {
+            RuleAction.DISMISS -> {
+                cancelNotification(sbn.key)
                 record(sbn, channel, Outcome.RULE, reason = rule.name)
             }
-            else -> record(sbn, channel, Outcome.SHOWN)
+            RuleAction.SNOOZE -> {
+                snoozeNotification(sbn.key, 60 * 60 * 1000L)
+                record(sbn, channel, Outcome.RULE, reason = rule.name)
+            }
+            // Only worth recording as "allowed" if it actually overrode a block.
+            RuleAction.ALLOW -> record(sbn, channel, if (blockAndLog) Outcome.ALLOWED else Outcome.SHOWN, reason = rule.name)
+            null -> record(sbn, channel, Outcome.SHOWN)
         }
     }
 
@@ -102,14 +112,22 @@ class NotifListener : NotificationListenerService() {
         return if (rankingMap?.getRanking(sbn.key, r) == true) r.channel else null
     }
 
-    private fun matchRule(rules: List<Rule>, sbn: StatusBarNotification): Rule? {
+    private fun matchRule(rules: List<Rule>, sbn: StatusBarNotification, category: Category): Rule? {
         if (rules.none { it.enabled }) return null
         val extras = sbn.notification.extras
         val text = textKeys.mapNotNull { extras.getCharSequence(it) }.joinToString(" ")
-        return rules.firstOrNull { r ->
-            r.enabled && (r.pkg.isNullOrBlank() || r.pkg == sbn.packageName) &&
-                r.keywords.any { it.isNotBlank() && text.contains(it.trim(), ignoreCase = true) }
-        }
+        return matchingRule(rules, sbn.packageName, category, text)
+    }
+
+    /** The category Sift files this notification under; rules can be scoped to it. */
+    private fun categoryOf(sbn: StatusBarNotification, channel: NotificationChannel?, d: StoreData): Category {
+        val channelId = sbn.notification.channelId ?: channel?.id.orEmpty()
+        val key = keyOf(sbn.packageName, channelId)
+        val known = app.repo.apps.value.firstOrNull { it.pkg == sbn.packageName }
+        return d.overrides[key]
+            ?: known?.channels?.firstOrNull { it.channel.id == channelId }?.category
+            ?: channel?.let { Classifier.classify(it, null, d.hints[key].orEmpty()).first }
+            ?: Category.OTHER
     }
 
     private fun record(
@@ -126,10 +144,7 @@ class NotifListener : NotificationListenerService() {
         val key = keyOf(sbn.packageName, channelId)
         val known = app.repo.apps.value.firstOrNull { it.pkg == sbn.packageName }
         val knownChannel = known?.channels?.firstOrNull { it.channel.id == channelId }
-        val category = d.overrides[key]
-            ?: knownChannel?.category
-            ?: channel?.let { Classifier.classify(it, null, d.hints[key].orEmpty()).first }
-            ?: Category.OTHER
+        val category = categoryOf(sbn, channel, d)
         app.history.record(
             HistoryEntry(
                 time = time,

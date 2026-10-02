@@ -35,12 +35,16 @@ class Repository(private val app: App) {
             val (auto, confidence) = Classifier.classify(ch, group, d.hints[key].orEmpty(), r.system, r.appCategory)
             ChannelInfo(
                 r.pkg, r.uid, r.label, ch, group, override ?: auto, if (override != null) 100 else confidence, override != null,
-                logged = key in d.logBlocked && ch.importance == NotificationManager.IMPORTANCE_MIN,
+                // Ours, under either block mode (MIN = hide & log, NONE = block fully). Tolerant of
+                // the window between a mode change and the channels being re-applied.
+                logged = key in d.logBlocked && ch.importance <= NotificationManager.IMPORTANCE_MIN,
             )
         },
     )
 
-    suspend fun scanAll(): Int = withContext(Dispatchers.IO) {
+    fun currentChannels(): List<ChannelInfo> = raw.value.values.flatMap { toInfo(it, app.store.data.value).channels }
+
+    suspend fun scanAll(adoptBlocked: Boolean = true): Int = withContext(Dispatchers.IO) {
         app.access.requireReady()
         val installed = pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
         val result = LinkedHashMap<String, RawApp>()
@@ -55,7 +59,7 @@ class Repository(private val app: App) {
         } finally {
             progress.value = null
         }
-        app.engine.adoptBlocked(result.values)
+        if (adoptBlocked) app.engine.adoptBlocked(result.values)
         app.engine.enforceNew(result.values)
         result.size
     }

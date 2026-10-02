@@ -21,6 +21,27 @@ enum class Category(val label: String, val description: String) {
     OTHER("Other", "Channels that didn't match any category"),
 }
 
+/** What blocking a channel actually does to it. */
+@Serializable
+enum class BlockMode(val label: String, val summary: String) {
+    HIDE_AND_LOG(
+        "Hide & log",
+        "Blocked notifications are removed the moment they arrive and kept in Logs, so you can still see what you missed.",
+    ),
+    BLOCK_FULLY(
+        "Block fully",
+        "Blocked channels are switched off in Android. Nothing arrives at all, so nothing can be logged and rules can't see them.",
+    ),
+    ;
+
+    /** The importance a blocked channel is set to. MIN still delivers, which is what lets us log it. */
+    val blockedImportance: Int
+        get() = when (this) {
+            HIDE_AND_LOG -> NotificationManager.IMPORTANCE_MIN
+            BLOCK_FULLY -> NotificationManager.IMPORTANCE_NONE
+        }
+}
+
 @Serializable
 enum class ChannelAction(val label: String, val description: String, val verb: String, val importance: Int) {
     POPUP("Pop up", "Sound, and appears on screen", "Set to pop up", NotificationManager.IMPORTANCE_HIGH),
@@ -96,8 +117,12 @@ data class Batch(val id: Long, val time: Long, val title: String, val changes: L
 
 @Serializable
 enum class RuleAction(val label: String, val description: String) {
-    DISMISS("Remove", "Removed as soon as it arrives, kept in Logs"),
-    SNOOZE("Snooze 1 hour", "Hidden for an hour, then shown again"),
+    DISMISS("Remove", "Removed as soon as it arrives, and kept in Logs"),
+    SNOOZE("Snooze", "Hidden for an hour, then shown again"),
+
+    // Can only stop *our* removal: Android has already delivered the notification at the blocked
+    // channel's importance, so a kept one sits silently in the shade rather than alerting.
+    ALLOW("Keep", "Let through even when its category is blocked. Arrives silently, without a pop-up"),
 }
 
 @Serializable
@@ -106,12 +131,34 @@ data class Rule(
     val name: String,
     val keywords: List<String>,
     val pkg: String? = null,
+    /** Only notifications Sift filed under this category; null means any. */
+    val category: Category? = null,
     val action: RuleAction = RuleAction.DISMISS,
     val enabled: Boolean = true,
 )
 
+fun matchingRule(rules: List<Rule>, pkg: String, category: Category, text: String): Rule? {
+    val matches = rules.filter { rule ->
+        rule.enabled && (rule.pkg.isNullOrBlank() || rule.pkg == pkg) &&
+            (rule.category == null || rule.category == category) &&
+            rule.keywords.any { it.isNotBlank() && text.contains(it.trim(), ignoreCase = true) }
+    }
+    return matches.firstOrNull { it.action == RuleAction.ALLOW } ?: matches.firstOrNull()
+}
+
 @Serializable
-enum class Outcome { SHOWN, BLOCKED, RULE }
+enum class Outcome {
+    SHOWN,
+    BLOCKED,
+    RULE,
+
+    /** Its category is blocked, but a "keep" rule let it through. */
+    ALLOWED,
+    ;
+
+    /** Whether Sift kept it out of the shade. Allowed notifications were let through. */
+    val keptOut get() = this == BLOCKED || this == RULE
+}
 
 /** One notification as it arrived; kept for 7 days. */
 @Serializable
@@ -141,8 +188,9 @@ data class StoreData(
     val hints: Map<String, Set<String>> = emptyMap(),
     val history: List<Batch> = emptyList(),
     val rules: List<Rule> = emptyList(),
-    /** Channel keys we block (and log). */
+    /** Channel keys we block. Kept across block-mode changes so we know which channels are ours. */
     val logBlocked: Set<String> = emptySet(),
+    val blockMode: BlockMode = BlockMode.HIDE_AND_LOG,
     val logExcludedApps: Set<String> = emptySet(),
     val theme: ThemeMode = ThemeMode.SYSTEM,
     /** Wallpaper-based colours instead of the brand palette. */

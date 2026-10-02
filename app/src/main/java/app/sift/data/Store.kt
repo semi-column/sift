@@ -20,6 +20,9 @@ class Store(context: Context, private val scope: CoroutineScope) {
     private val _data = MutableStateFlow(load())
     val data: StateFlow<StoreData> = _data
 
+    /** Replaces every setting at once, for a restored backup. */
+    fun replace(data: StoreData) = update { data }
+
     fun update(block: (StoreData) -> StoreData) {
         _data.update(block)
         scope.launch(Dispatchers.IO) { writeLock.withLock { save(_data.value) } }

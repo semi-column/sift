@@ -53,6 +53,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.sift.backend.AccessState
 import app.sift.data.AppInfo
+import app.sift.data.BlockMode
+import app.sift.data.Category
 import app.sift.data.HistoryEntry
 import app.sift.data.Outcome
 import app.sift.data.Rule
@@ -70,6 +72,7 @@ private fun newRule(name: String = "", keywords: List<String> = emptyList(), pkg
 /** Approximates the listener's matching against what Logs keeps (title and text). */
 private fun Rule.matches(e: HistoryEntry): Boolean {
     if (pkg != null && pkg != e.pkg) return false
+    if (category != null && category != e.category) return false
     val text = "${e.title} ${e.text}"
     return keywords.any { it.isNotBlank() && text.contains(it.trim(), ignoreCase = true) }
 }
@@ -79,6 +82,7 @@ fun RulesScreen(
     rules: List<Rule>,
     apps: List<AppInfo>,
     history: List<HistoryEntry>,
+    blockMode: BlockMode,
     access: AccessState,
     onTab: (Tab) -> Unit,
     nav: Nav,
@@ -143,7 +147,7 @@ fun RulesScreen(
                     RuleCard(
                         r,
                         appLabel = r.pkg?.let { labels[it] ?: it },
-                        caught = history.count { it.outcome == Outcome.RULE && it.reason == r.name },
+                        caught = history.count { it.reason == r.name && (if (r.action == RuleAction.ALLOW) it.outcome == Outcome.ALLOWED else it.outcome.keptOut) },
                         onToggle = { vm.toggleRule(r) },
                         onClick = { editing = r },
                     )
@@ -159,6 +163,7 @@ fun RulesScreen(
             isNew = isNew,
             apps = apps,
             history = history,
+            blockMode = blockMode,
             onDismiss = { editing = null },
             onSave = { vm.saveRule(it); editing = null },
             onDelete = if (isNew) null else ({ vm.deleteRule(rule); editing = null }),
@@ -216,6 +221,7 @@ private fun RuleCard(r: Rule, appLabel: String?, caught: Int, onToggle: () -> Un
                     Text(
                         listOfNotNull(
                             appLabel ?: "All apps",
+                            r.category?.label,
                             r.action.label,
                             caught.takeIf { it > 0 }?.let { "caught $it this week" },
                         ).joinToString(" \u00b7 "),
@@ -250,6 +256,7 @@ fun RuleEditorSheet(
     isNew: Boolean,
     apps: List<AppInfo>,
     history: List<HistoryEntry>,
+    blockMode: BlockMode,
     onDismiss: () -> Unit,
     onSave: (Rule) -> Unit,
     onDelete: (() -> Unit)?,
@@ -257,6 +264,7 @@ fun RuleEditorSheet(
     var keywords by remember { mutableStateOf(rule.keywords) }
     var input by remember { mutableStateOf("") }
     var pkg by remember { mutableStateOf(rule.pkg) }
+    var category by remember { mutableStateOf(rule.category) }
     var action by remember { mutableStateOf(rule.action) }
     var name by remember { mutableStateOf(rule.name) }
     val appChoices = remember(apps) { apps.filter { it.channels.isNotEmpty() }.sortedBy { it.label.lowercase() } }
@@ -267,7 +275,10 @@ fun RuleEditorSheet(
     }
 
     val allKeywords = (keywords + splitKeywords(input)).distinctBy { it.lowercase() }
-    val draft = rule.copy(name = name.trim().ifBlank { allKeywords.firstOrNull().orEmpty() }, keywords = allKeywords, pkg = pkg, action = action)
+    val draft = rule.copy(
+        name = name.trim().ifBlank { allKeywords.firstOrNull().orEmpty() },
+        keywords = allKeywords, pkg = pkg, category = category, action = action,
+    )
     val matches = remember(draft, history) { if (allKeywords.isEmpty()) emptyList() else history.filter { draft.matches(it) } }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
@@ -303,12 +314,20 @@ fun RuleEditorSheet(
             )
 
             FieldLabel("From")
-            MenuChip(
-                label = pkg?.let { p -> apps.firstOrNull { it.pkg == p }?.label ?: history.firstOrNull { it.pkg == p }?.app ?: p } ?: "All apps",
-                selected = pkg != null,
-                options = listOf<Pair<String?, String>>(null to "All apps") + appChoices.map { it.pkg to it.label },
-                onPick = { pkg = it },
-            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MenuChip(
+                    label = pkg?.let { p -> apps.firstOrNull { it.pkg == p }?.label ?: history.firstOrNull { it.pkg == p }?.app ?: p } ?: "All apps",
+                    selected = pkg != null,
+                    options = listOf<Pair<String?, String>>(null to "All apps") + appChoices.map { it.pkg to it.label },
+                    onPick = { pkg = it },
+                )
+                MenuChip(
+                    label = category?.label ?: "Any category",
+                    selected = category != null,
+                    options = listOf<Pair<Category?, String>>(null to "Any category") + Category.entries.map { it to it.label },
+                    onPick = { category = it },
+                )
+            }
 
             FieldLabel("Then")
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -326,6 +345,16 @@ fun RuleEditorSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // A kept notification is one Sift chose not to remove. Under "block fully" there is
+            // nothing to not-remove, because Android never delivers it in the first place.
+            if (action == RuleAction.ALLOW && blockMode == BlockMode.BLOCK_FULLY) {
+                Text(
+                    "Blocking is set to \u201cblock fully\u201d, so blocked notifications never reach Sift and this rule can't catch them. Switch to \u201chide & log\u201d in Settings.",
+                    Modifier.padding(top = 8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
 
             FieldLabel("Name")
             OutlinedTextField(

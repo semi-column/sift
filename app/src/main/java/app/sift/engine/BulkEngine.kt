@@ -4,6 +4,7 @@ import android.app.NotificationManager
 import app.sift.App
 import app.sift.backend.Channels
 import app.sift.data.Batch
+import app.sift.data.BlockMode
 import app.sift.data.ChannelAction
 import app.sift.data.ChannelChange
 import app.sift.data.ChannelInfo
@@ -28,9 +29,39 @@ class BulkEngine(private val app: App) {
 
     private val mutex = Mutex()
 
-    suspend fun apply(title: String, targets: List<ChannelInfo>, action: ChannelAction): Outcome = setImportance(
-        title, targets.map { Target(it.pkg, it.uid, it.channel.id, action.importance, action == ChannelAction.BLOCK) }, record = true,
-    )
+    suspend fun apply(title: String, targets: List<ChannelInfo>, action: ChannelAction): Outcome {
+        val blocking = action == ChannelAction.BLOCK
+        // How low "blocked" goes depends on the block mode; everything else is fixed by the action.
+        val importance = if (blocking) app.store.data.value.blockMode.blockedImportance else action.importance
+        return setImportance(
+            title, targets.map { Target(it.pkg, it.uid, it.channel.id, importance, blocking) }, record = true,
+        )
+    }
+
+    /**
+     * Re-applies the blocked importance to every channel we own. Used when the block mode changes
+     * and after a settings restore, so "blocked" on screen matches what Android is actually doing.
+     */
+    suspend fun reapplyBlockMode(): Outcome {
+        val d = app.store.data.value
+        val targets = app.repo.currentChannels()
+            .filter { it.key in d.logBlocked }
+            .map { Target(it.pkg, it.uid, it.channel.id, d.blockMode.blockedImportance, logged = true) }
+        if (targets.isEmpty()) return Outcome(0, 0, 0, 0, null, null)
+        // Not recorded: the mode toggle is its own undo, and a batch would fight the new mode.
+        return setImportance("Block mode: ${d.blockMode.label}", targets, record = false)
+    }
+
+    suspend fun restoreChannelSettings(importance: Map<String, Int>): Outcome {
+        val settings = app.store.data.value
+        val targets = app.repo.currentChannels().mapNotNull { channel ->
+            val blocked = channel.key in settings.logBlocked
+            val level = if (blocked) settings.blockMode.blockedImportance else importance[channel.key]
+            level?.let { Target(channel.pkg, channel.uid, channel.channel.id, it, blocked) }
+        }
+        if (targets.isEmpty()) return Outcome(0, 0, 0, 0, null, null)
+        return setImportance("Restore channel settings", targets, record = false)
+    }
 
     suspend fun undo(batch: Batch): Outcome {
         val outcome = setImportance(
@@ -63,6 +94,9 @@ class BulkEngine(private val app: App) {
      * (e.g. turned off in Android Settings) are switched to our own block, which keeps them in Logs.
      */
     suspend fun adoptBlocked(raws: Collection<RawApp>) {
+        // Only worth doing when we can log what those channels would have dropped. Under
+        // "block fully" an off channel is already exactly what we want, so leave it alone.
+        if (app.store.data.value.blockMode == BlockMode.BLOCK_FULLY) return
         val targets = raws.flatMap { r ->
             r.channels.filter { it.importance == NotificationManager.IMPORTANCE_NONE }
                 .map { Target(r.pkg, r.uid, it.id, NotificationManager.IMPORTANCE_MIN, logged = true) }
@@ -99,7 +133,7 @@ class BulkEngine(private val app: App) {
                     val attempted = mutableListOf<Attempt>()
                     for (t in group) {
                         val ch = current[t.channelId] ?: continue
-                        val wasLogged = keyOf(pkg, t.channelId) in logBlocked && ch.importance == NotificationManager.IMPORTANCE_MIN
+                        val wasLogged = keyOf(pkg, t.channelId) in logBlocked && ch.importance <= NotificationManager.IMPORTANCE_MIN
                         if (ch.importance == t.importance && wasLogged == t.logged) {
                             unchanged++
                             continue

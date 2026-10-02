@@ -1,10 +1,13 @@
 package app.sift.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.sift.App
+import app.sift.data.Backup
 import app.sift.data.Batch
+import app.sift.data.BlockMode
 import app.sift.data.Category
 import app.sift.data.ChannelAction
 import app.sift.data.ChannelInfo
@@ -12,8 +15,10 @@ import app.sift.data.HistoryEntry
 import app.sift.data.Rule
 import app.sift.data.ThemeMode
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class UiMessage(val text: String, val undo: Batch? = null, val onUndo: (() -> Unit)? = null)
 
@@ -119,6 +124,62 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleRule(rule: Rule) = saveRule(rule.copy(enabled = !rule.enabled))
 
     fun deleteRule(rule: Rule) = app.store.update { it.copy(rules = it.rules.filterNot { r -> r.id == rule.id }) }
+
+    /**
+     * Switching mode has to re-apply every channel we own, or the UI would keep saying "blocked"
+     * while Android carried on doing the old thing.
+     */
+    fun setBlockMode(mode: BlockMode) = launch {
+        if (app.store.data.value.blockMode == mode) return@launch
+        app.access.requireReady()
+        app.repo.scanAll()
+        app.store.update { it.copy(blockMode = mode) }
+        val outcome = app.engine.reapplyBlockMode()
+        say(
+            if (outcome.changed == 0 && outcome.failed == 0 && outcome.locked == 0) {
+                "Switched to ${mode.label.lowercase()}"
+            } else {
+                "${mode.label} \u00b7 ${outcome.describe("Updated")}"
+            },
+        )
+    }
+
+    fun exportSettings(uri: Uri) = launch {
+        app.access.requireReady()
+        app.repo.scanAll()
+        val backup = Backup.encode(app.store.data.value, app.repo.currentChannels().associate { it.key to it.channel.importance })
+        withContext(Dispatchers.IO) {
+            val out = app.contentResolver.openOutputStream(uri) ?: error("Couldn't write to that file")
+            out.use { it.write(backup.encodeToByteArray()) }
+        }
+        say("Settings backed up")
+    }
+
+    /** Replaces all settings, then makes the device match them again. */
+    fun importSettings(uri: Uri) = launch {
+        app.access.requireReady()
+        val backup = withContext(Dispatchers.IO) {
+            val input = app.contentResolver.openInputStream(uri) ?: error("Couldn't read that file")
+            input.use {
+                val bytes = it.readNBytes(1_048_577)
+                require(bytes.size <= 1_048_576) { "That backup is too large (maximum 1 MB)" }
+                Backup.decode(bytes.decodeToString())
+            }
+        }
+        val restored = backup.settings
+        app.repo.scanAll()
+        val previous = app.store.data.value
+        val removed = app.repo.currentChannels().filter { it.key in previous.logBlocked && it.key !in restored.logBlocked }
+        if (removed.isNotEmpty()) {
+            val released = app.engine.apply("Restore: release previous blocks", removed, ChannelAction.ALERT)
+            require(released.failed == 0 && released.locked == 0) { released.describe("Released") + "; restore cancelled" }
+        }
+        app.store.replace(restored)
+        restored.logExcludedApps.forEach(app.history::removePackage)
+        app.repo.scanAll(adoptBlocked = false)
+        val outcome = app.engine.restoreChannelSettings(backup.channelImportance)
+        say("Settings restored \u00b7 ${restored.rules.size} rules \u00b7 ${outcome.describe("Updated")}")
+    }
 
     fun setTheme(mode: ThemeMode) = app.store.update { it.copy(theme = mode) }
 

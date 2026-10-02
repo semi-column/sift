@@ -19,10 +19,16 @@ import androidx.compose.material.icons.outlined.FilterAlt
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -40,6 +46,9 @@ import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -79,6 +88,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         App.of(this).access.refresh()
+        App.of(this).scope.launch { App.of(this@MainActivity).updates.check() }
     }
 }
 
@@ -105,6 +115,8 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
     val store by vm.store.collectAsStateWithLifecycle()
     val progress by vm.progress.collectAsStateWithLifecycle()
     val history by vm.history.collectAsStateWithLifecycle()
+    val updates by vm.updates.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     val snackbar = remember { SnackbarHostState() }
     var tab by rememberSaveable { mutableStateOf(Tab.CATEGORIES) }
@@ -178,6 +190,27 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
                 .navigationBarsPadding()
                 .padding(horizontal = 8.dp)
                 .padding(bottom = if (setup) 84.dp else if (route == null) 80.dp else 0.dp),
+        )
+    }
+
+    updates.available?.takeIf { !setup && it.tag != updates.dismissedTag }?.let { update ->
+        AlertDialog(
+            onDismissRequest = vm::dismissUpdate,
+            title = { Text("Sift ${update.tag} is available") },
+            text = {
+                Column(Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState())) {
+                    Text("Installed: ${app.sift.BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelLarge)
+                    if (update.notes.isNotBlank()) {
+                        Text(update.notes.take(4_000), Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (openLink(context, update.url)) vm.dismissUpdate() else vm.say("No browser is available")
+                }) { Text("View release") }
+            },
+            dismissButton = { TextButton(onClick = vm::dismissUpdate) { Text("Later") } },
         )
     }
 }

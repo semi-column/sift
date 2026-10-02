@@ -6,7 +6,7 @@
 
 Control notifications by **what they're about**, across all your apps at once. Silence every app's promotions in one tap, see a history of everything that arrived, and review what was blocked.
 
-No root, no account, no internet permission: everything stays on your device.
+No root or account. Your notifications and settings stay on your device; optional update checks contact GitHub.
 
 ## Features
 
@@ -19,6 +19,7 @@ No root, no account, no internet permission: everything stays on your device.
 - **Back up your settings**: export channel behaviors, categories, rules, blocks, log exclusions and appearance to a file. Restore them for matching apps and channels on another device. Notification history and device-specific undo records are never included. Set up notification access and pairing before restoring; Android may refuse changes to locked channels.
 - **Exclude apps from Logs**: keep private apps (e.g. messengers) out of the history.
 - **Undo**: every change can be undone from the change history.
+- **Update checks**: checks GitHub for a newer published stable release when you open Sift, at most once daily. Settings shows update status and offers a manual check and automatic-check opt-out. New releases prompt once per version; choosing Later leaves the update available in Settings. Downloads open in your browser, and Android confirms installation and checks the APK signing key.
 
 ## How it works, and its limits
 
@@ -64,7 +65,7 @@ All releases are signed with the same key. Android refuses to update Sift with a
 
 ## Privacy
 
-- No internet permission. Sift can't send anything anywhere.
+- Internet access is used only to fetch public release metadata from GitHub over HTTPS. No notification content, rules, app lists or settings are sent. GitHub receives normal connection metadata, such as your IP address and Sift version. Turn off automatic checks in Settings to make checks manual-only.
 - Notification history is stored only in the app's private storage, kept for 7 days, and excluded from Android backups and device transfers.
 - Clearing history, excluding an app, or uninstalling deletes the stored notifications.
 - Settings backups include your channel settings, categories, rules, blocks, log exclusions and appearance, but no notification history. Backups are unencrypted JSON, so store them somewhere private; rule keywords can contain sensitive phrases.
@@ -76,6 +77,7 @@ All releases are signed with the same key. Android refuses to update Sift with a
 | Notification access | Read incoming notifications, and read and change other apps' notification channels |
 | `QUERY_ALL_PACKAGES` | List your installed apps and their channels |
 | `REQUEST_COMPANION_RUN_IN_BACKGROUND` | Keep the companion pairing active in the background |
+| `INTERNET` | Check public GitHub release metadata for updates |
 
 ## Building
 
@@ -105,6 +107,8 @@ Releases are built and signed by GitHub Actions ([release.yml](.github/workflows
 2. Tag the commit with the same version (`git tag v0.1.0 && git push origin v0.1.0`).
 3. The workflow checks the tag matches `versionName`, runs tests and lint, builds and signs the APK, and creates a **draft** release with checksums.
 4. Review the draft, edit the notes, and publish it.
+
+The updater sees only published stable releases with an APK, not tags alone, drafts, prereleases or dry-run artifacts. Increment both `versionCode` and `versionName` for each release, and mark the published release as latest on GitHub.
 
 The signing key is provided through these repository secrets:
 

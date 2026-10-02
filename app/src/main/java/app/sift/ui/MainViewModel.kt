@@ -29,6 +29,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val access = app.access.state
     val store = app.store.data
     val message = MutableStateFlow<UiMessage?>(null)
+    val updates = app.updates.state
     private var scanned = false
 
     fun say(text: String) {
@@ -55,6 +56,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshAccess() = app.access.refresh()
+
+    fun checkUpdates() = launch { app.updates.check(force = true) }
+
+    fun setAutomaticUpdates(enabled: Boolean) {
+        app.updates.setAutomatic(enabled)
+        if (enabled) launch { app.updates.check() }
+    }
+
+    fun dismissUpdate() = app.updates.dismiss()
 
     /** Bulk action; "Allow" leaves already-allowed channels alone so pop-up channels aren't downgraded. */
     fun bulk(targets: List<ChannelInfo>, action: ChannelAction, title: String) = launch {

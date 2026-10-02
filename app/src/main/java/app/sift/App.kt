@@ -6,6 +6,7 @@ import app.sift.backend.Access
 import app.sift.data.HistoryStore
 import app.sift.data.Repository
 import app.sift.data.Store
+import app.sift.data.Updates
 import app.sift.engine.BulkEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +19,7 @@ class App : Application() {
     lateinit var access: Access
     lateinit var repo: Repository
     lateinit var engine: BulkEngine
+    lateinit var updates: Updates
 
     override fun onCreate() {
         super.onCreate()
@@ -26,6 +28,7 @@ class App : Application() {
         access = Access(this)
         repo = Repository(this)
         engine = BulkEngine(this)
+        updates = Updates(this)
     }
 
     companion object {

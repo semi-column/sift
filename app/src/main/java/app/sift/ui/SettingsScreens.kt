@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
@@ -41,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.sift.BuildConfig
 import app.sift.backend.AccessState
 import app.sift.data.AppInfo
@@ -63,6 +65,7 @@ fun SettingsScreen(
 ) {
     val historyCount = store.history.size
     val ctx = LocalContext.current
+    val updates by vm.updates.collectAsStateWithLifecycle()
     var confirmRestore by remember { mutableStateOf<Uri?>(null) }
     var confirmMode by remember { mutableStateOf<BlockMode?>(null) }
 
@@ -84,6 +87,48 @@ fun SettingsScreen(
                     trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
                     colors = clearListItem(),
                     modifier = Modifier.clickable { nav.push("setup") },
+                )
+            }
+
+            item { SectionLabel("Updates") }
+            item {
+                ListItem(
+                    headlineContent = { Text(updates.available?.let { "Update available: ${it.tag}" } ?: "Sift ${BuildConfig.VERSION_NAME}") },
+                    supportingContent = {
+                        Column {
+                            Text(
+                                when {
+                                    updates.checking -> "Checking GitHub…"
+                                    updates.error != null -> updates.error!!
+                                    updates.available != null -> "View the release on GitHub"
+                                    updates.lastChecked == 0L -> "Not checked yet"
+                                    else -> "No newer release · checked " + DateUtils.getRelativeTimeSpanString(updates.lastChecked)
+                                },
+                            )
+                        }
+                    },
+                    trailingContent = {
+                        IconButton(onClick = { vm.checkUpdates() }, enabled = !updates.checking) {
+                            Icon(Icons.Default.Refresh, "Check for updates")
+                        }
+                    },
+                    colors = clearListItem(),
+                    modifier = Modifier.clickable(enabled = !updates.checking) {
+                        val update = updates.available
+                        if (update == null) vm.checkUpdates()
+                        else if (!openLink(ctx, update.url)) vm.say("No browser is available")
+                    },
+                )
+            }
+            item {
+                ListItem(
+                    headlineContent = { Text("Automatic update checks") },
+                    supportingContent = { Text("Check GitHub when Sift opens, at most once a day") },
+                    trailingContent = {
+                        Switch(checked = updates.automatic, onCheckedChange = vm::setAutomaticUpdates, colors = quietSwitchColors())
+                    },
+                    colors = clearListItem(),
+                    modifier = Modifier.clickable { vm.setAutomaticUpdates(!updates.automatic) },
                 )
             }
 
@@ -280,10 +325,8 @@ private fun backupFileName(): String {
     return "sift-settings-$day.json"
 }
 
-/** Hands the URL to a browser. Sift has no internet permission and never fetches anything itself. */
-private fun openLink(ctx: Context, url: String) {
-    runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }
-}
+fun openLink(ctx: Context, url: String): Boolean =
+    runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }.isSuccess
 
 @Composable
 fun HistoryScreen(history: List<Batch>, nav: Nav, vm: MainViewModel) {
